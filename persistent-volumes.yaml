@@ -6,7 +6,7 @@ metadata:
   namespace: airflow
 spec:
   accessModes:
-    - ReadWriteMany
+    - ReadWriteOnce
   resources:
     requests:
       storage: 25Gi
@@ -20,7 +20,7 @@ metadata:
   namespace: airflow
 spec:
   accessModes:
-    - ReadWriteMany
+    - ReadWriteOnce
   resources:
     requests:
       storage: 40Gi
@@ -34,7 +34,7 @@ metadata:
   namespace: airflow
 spec:
   accessModes:
-    - ReadWriteMany
+    - ReadWriteOnce
   resources:
     requests:
       storage: 10Gi
