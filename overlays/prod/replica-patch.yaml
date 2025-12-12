@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: airflow-secrets
+data:
+  AIRFLOW__CORE__FERNET_KEY: c3Ryb25nLXByb2QtZmVybmV0LWtleS0zMi1ieXRlcy1iYXNlNjQtZW5jb2RlZA==  # strong-prod-fernet-key-32-bytes-base64-encoded
+  AIRFLOW__CORE__SQL_ALCHEMY_CONN: cG9zdGdyZXNxbCtwc3ljb3BnMjovL2FpcmZsb3dfdXNlcjpwcm9kX3Bhc3N3b3JkQHBvc3RncmVzcWwtc2VydmljZTo1NDMyL2FpcmZsb3c=  # postgresql+psycopg2://airflow_user:prod_password@postgresql-service:5432/airflow
+  POSTGRES_PASSWORD: cHJvZF9wYXNzd29yZA==  # prod_password
+  POSTGRES_USER: YWlyZmxvd191c2Vy  # airflow_user
+  POSTGRES_DB: YWlyZmxvdw==  # airflow
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: airflow-webserver-secret
+data:
+  AIRFLOW__WEBSERVER__SECRET_KEY: c3Ryb25nLXByb2Qtd2ViLXNlY3JldC1rZXktZm9yLXByb2R1Y3Rpb24=  # strong-prod-web-secret-key-for-production

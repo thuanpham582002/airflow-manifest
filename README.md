@@ -1,329 +1,314 @@
-# Apache Airflow Kubernetes Manifests
+# Apache Airflow Kubernetes Manifests with Kustomize
 
-This repository contains Kubernetes manifests for deploying Apache Airflow with all its components using Kustomize.
+This directory contains Kubernetes manifests for deploying Apache Airflow using Kustomize with CeleryExecutor for distributed execution.
 
-## Architecture
+## Directory Structure
 
-The deployment includes a complete Airflow setup with:
-- **Airflow API Server** - REST API and web interface
-- **Airflow Scheduler** - DAG scheduling and execution
-- **Airflow Worker** - Task execution
-- **Airflow Triggerer** - Trigger-based DAG execution
-- **Airflow DAG Processor** - DAG file processing
-- **Redis** - Message broker and caching
-- **PostgreSQL** - Metadata database (assumed existing)
-
-## Components Overview
-
-### Core Airflow Services
-- **airflow-apiserver** - Web UI and REST API (ClusterIP on port 8080)
-- **airflow-scheduler** - DAG scheduler component
-- **airflow-worker** - Task execution workers
-- **airflow-triggerer** - Trigger-based execution
-- **airflow-dag-processor** - DAG file processing
-
-### Infrastructure Services
-- **redis** - Message broker for Celery
-- **postgresql-setup** - Database initialization job
-
-### Storage and Configuration
-- **Persistent Volumes** - DAGs, logs, and plugins storage
-- **ConfigMaps** - Airflow configuration
-- **Secrets** - Encryption keys and database credentials
-- **ServiceAccounts** - Kubernetes RBAC
-
-## Prerequisites
-
-1. **Kubernetes Cluster** with at least:
-   - 4GB RAM minimum
-   - 2+ CPU cores recommended
-
-2. **PostgreSQL Database** (existing):
-   - Database: `airflow`
-   - User: `airflow`
-   - Connection string configured in secrets
-
-3. **Storage Class** for persistent volumes
-
-## Deployment
-
-### Quick Deploy
-```bash
-# Deploy Airflow with all components
-kubectl apply -k .
-
-# Check deployment status
-kubectl get pods -n airflow
-kubectl get services -n airflow
-
-# Watch pods startup
-kubectl get pods -n airflow -w
+```
+airflow-manifests/
+├── base/
+│   ├── kustomization.yaml    # Base configuration
+│   └── airflow.yaml          # All Airflow resources (Deployments, Services, PVCs, Jobs, RBAC)
+├── overlays/
+│   ├── dev/                  # Development environment overrides
+│   │   ├── kustomization.yaml
+│   │   ├── storage-patch.yaml        # Smaller storage sizes
+│   │   ├── resources-patch.yaml      # Smaller resource limits
+│   │   └── config-patch.yaml         # Dev-friendly configuration
+│   └── prod/                 # Production environment overrides
+│       ├── kustomization.yaml
+│       ├── storage-patch.yaml        # Larger storage sizes
+│       ├── resources-patch.yaml      # Larger resource limits
+│       ├── replica-patch.yaml        # Stronger security secrets
+│       └── config-patch.yaml         # Production-optimized configuration
+└── README.md
 ```
 
-### Verify Setup
+## Components
+
+The deployment includes the following components:
+
+### Airflow Core Services
+- **Web Server**: Web UI and REST API server
+- **Scheduler**: Triggers DAGs and tasks based on schedule
+- **Workers**: Execute tasks using CeleryExecutor
+- **Triggerer**: Deferrable operators and triggers
+- **Database Initialization Job**: Sets up database and creates admin user
+- **Database Migration Job**: Runs database migrations
+
+### Dependencies
+- **PostgreSQL**: Primary metadata database
+- **Redis**: Message broker for Celery workers
+
+### Kubernetes Resources
+- **ServiceAccount**: For Airflow to interact with Kubernetes API
+- **RBAC**: Permissions for KubernetesExecutor (if needed)
+- **PersistentVolumeClaims**: Storage for DAGs, logs, plugins, and database
+
+## Deployment Options
+
+### Development Environment
+
 ```bash
-# Check database connection
-kubectl logs -n airflow job/airflow-init-db -f
+# Deploy to dev namespace
+kubectl apply -k overlays/dev
 
-# Check scheduler logs
-kubectl logs -n airflow deployment/airflow-scheduler -f
+# Check the deployment
+kubectl get pods -n airflow-dev
+kubectl get svc -n airflow-dev
+```
 
-# Check API server logs
-kubectl logs -n airflow deployment/airflow-apiserver -f
+### Production Environment
+
+```bash
+# Deploy to prod namespace
+kubectl apply -k overlays/prod
+
+# Check the deployment
+kubectl get pods -n airflow-prod
+kubectl get svc -n airflow-prod
+```
+
+### Base Configuration
+
+```bash
+# Deploy with base configuration
+kubectl apply -k base
+
+# Access Airflow Web UI using port-forward:
+kubectl port-forward -n airflow svc/airflow-webserver-service 8080:8080
+# Then visit: http://localhost:8080
+# Default credentials: admin/admin
 ```
 
 ## Accessing Airflow
 
-### Internal Access
-- **Airflow Web UI**: `airflow-apiserver.airflow.svc.cluster.local:8080`
-- **Airflow API**: `airflow-apiserver.airflow.svc.cluster.local:8080/api/v2/`
-- **Redis**: `redis.airflow.svc.cluster.local:6379`
+### Web UI (Port 8080)
+- Internal cluster: `airflow-webserver-service.airflow.svc.cluster.local:8080`
 
 ### External Access Options
+For external access, consider using:
+- **Ingress**: Configure an Ingress controller with SSL termination
+- **kubectl port-forward**: `kubectl port-forward -n namespace svc/airflow-webserver-service 8080:8080`
+- **LoadBalancer**: Change service type to LoadBalancer if your cluster supports it
 
-Since only ClusterIP services are configured, use one of these methods:
+### Default Credentials
+- Username: `admin`
+- Password: `admin`
 
-1. **Port Forwarding** (recommended for temporary access):
-```bash
-# Forward Airflow web UI
-kubectl port-forward -n airflow svc/airflow-apiserver 8080:8080
-# Access at http://localhost:8080
-
-# Forward Redis (if needed)
-kubectl port-forward -n airflow svc/redis 6379:6379
-```
-
-2. **LoadBalancer Service** (if your cluster supports it):
-```bash
-kubectl patch svc airflow-apiserver -n airflow -p '{"spec":{"type":"LoadBalancer"}}'
-```
-
-3. **Ingress Controller** (manual setup):
-Create your own Ingress resource to route traffic to the ClusterIP service
+**Important**: Change the default credentials and secrets before using in production!
+- Update the `airflow-secrets` and `airflow-webserver-secret` Secrets
+- Generate new Fernet key and web server secret key
 
 ## Configuration
 
-### Environment Variables
-The Airflow deployment is configured with:
+### Core Environment Variables
 
-```yaml
-AIRFLOW__CORE__EXECUTOR: CeleryExecutor
-AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:password@postgresql:5432/airflow
-AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
-AIRFLOW__CELERY__RESULT_BACKEND: redis://redis:6379/1
+The manifests include these key configuration options:
+
+#### Airflow Core Configuration
+- `AIRFLOW__CORE__EXECUTOR`: CeleryExecutor for distributed execution
+- `AIRFLOW__CORE__SQL_ALCHEMY_CONN`: PostgreSQL connection string
+- `AIRFLOW__CORE__FERNET_KEY`: Encryption key for sensitive data
+- `AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION`: Pause DAGs on creation
+- `AIRFLOW__CORE__LOAD_EXAMPLES`: Load example DAGs (dev only)
+
+#### Celery Configuration
+- `AIRFLOW__CELERY__BROKER_URL`: Redis broker URL
+- `AIRFLOW__CELERY__RESULT_BACKEND`: Redis result backend
+
+#### Web Server Configuration
+- `AIRFLOW__WEBSERVER__EXPOSE_CONFIG`: Expose configuration in UI (dev only)
+- `AIRFLOW__WEBSERVER__AUTHENTICATE`: Enable authentication
+- `AIRFLOW__WEBSERVER__SECRET_KEY`: Flask secret key for sessions
+
+### Volume Mounts
+- **DAGs**: `/opt/airflow/dags` - Store your DAG files here
+- **Logs**: `/opt/airflow/logs` - Airflow execution logs
+- **Plugins**: `/opt/airflow/plugins` - Custom plugins
+
+### Customization
+
+#### Environment-Specific Variables
+
+Edit the patch files in overlays/dev or overlays/prod to customize:
+- Storage sizes for database, DAGs, logs, and plugins
+- Resource limits/requests for all components
+- Replica counts for high availability
+- Security configurations and secrets
+- Logging levels and debugging options
+
+#### Adding DAGs
+
+1. **Copy DAG files to the PVC**:
+```bash
+kubectl cp your_dag.py airflow-dev/dag-pod-xxx:/opt/airflow/dags/
 ```
 
-### Required Secrets
+2. **Use Git sync** (recommended for production):
+   - Add a sidecar container to sync DAGs from Git
+   - Or use external DAG storage (S3, GCS, etc.)
 
-Before deployment, ensure these secrets are created:
+3. **Build custom image**:
+   - Create a custom Dockerfile with your DAGs
+   - Update the image in the manifests
 
-1. **airflow-postgres-secret**:
-   - `AIRFLOW_CONN_POSTGRES_DEFAULT`: PostgreSQL connection string
+#### Adding Custom Providers
 
-2. **airflow-fernet-key**:
-   - `fernet-key`: Fernet encryption key for sensitive data
+Build a custom Airflow image with your required packages:
 
-3. **airflow-webserver-secret**:
-   - `webserver-secret-key`: Webserver session encryption
+```dockerfile
+FROM apache/airflow:2.10.2-python3.11
 
-4. **airflow-api-secrets**:
-   - `jwt-secret`: JWT authentication token
-   - `internal-api-secret-key`: Internal API authentication
+# Install Python packages
+RUN pip install apache-airflow-providers-cncf-kubernetes \
+                apache-airflow-providers-amazon \
+                apache-airflow-providers-google
 
-### Generate Secrets
+# Copy your DAGs
+COPY dags/ /opt/airflow/dags/
+```
 
+## Security Considerations
+
+### Production Hardening
+
+1. **Generate Strong Secrets**:
 ```bash
 # Generate Fernet key
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 
-# Generate webserver secret key
+# Generate Flask secret key
 python -c "import secrets; print(secrets.token_hex(32))"
-
-# Generate JWT secret
-python -c "import secrets; print(secrets.token_urlsafe(32))"
-
-# Generate internal API secret
-python -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
-## Storage Configuration
-
-### Persistent Volumes
-- **airflow-dags-pvc**: DAG files storage (default 1Gi)
-- **airflow-logs-pvc**: Airflow logs storage (default 5Gi)
-- **airflow-plugins-pvc**: Custom plugins storage (default 1Gi)
-
-### DAG Management
-Add DAG files to the persistent volume:
+2. **Update Secrets**:
 ```bash
-# Copy DAGs to running pod
-kubectl cp your-dag.py airflow-apiserver-xxx:/opt/airflow/dags/
+kubectl create secret generic airflow-secrets \
+  --from-literal=AIRFLOW__CORE__FERNET_KEY=your-fernet-key \
+  --from-literal=AIRFLOW__CORE__SQL_ALCHEMY_CONN=your-db-connection \
+  --from-literal=POSTGRES_PASSWORD=your-db-password \
+  --from-literal=POSTGRES_USER=your-db-user
 
-# Or mount a volume with your DAGs
+kubectl create secret generic airflow-webserver-secret \
+  --from-literal=AIRFLOW__WEBSERVER__SECRET_KEY=your-flask-secret
+```
+
+3. **Network Policies**: Implement network policies to restrict traffic
+4. **RBAC**: Use proper RBAC for Kubernetes access and service accounts
+5. **TLS**: Enable TLS for external access using Ingress with SSL
+6. **Image Security**: Use private registry for production images
+
+## Monitoring and Health Checks
+
+### Health Checks
+All deployments include health checks:
+- **Liveness Probe**: Ensures the container is running
+- **Readiness Probe**: Ensures the container is ready to serve traffic
+
+### Logs
+```bash
+# Airflow component logs
+kubectl logs -n namespace deployment/airflow-webserver -f
+kubectl logs -n namespace deployment/airflow-scheduler -f
+kubectl logs -n namespace deployment/airflow-worker -f
+kubectl logs -n namespace deployment/airflow-triggerer -f
+
+# Database logs
+kubectl logs -n namespace deployment/postgresql -f
+
+# Redis logs
+kubectl logs -n namespace deployment/redis -f
 ```
 
 ## Scaling
 
 ### Horizontal Scaling
-Scale workers to handle more tasks:
+- **Web Servers**: For high availability (production: 2 replicas)
+- **Schedulers**: For improved scheduling performance (production: 2 replicas)
+- **Workers**: Scale based on task execution load (production: 5 replicas, dev: 1 replica)
+- **Triggerers**: For deferrable operators (production: 2 replicas)
+
+### Resource Scaling
+- CPU and memory limits are configured per environment
+- Adjust based on your workload and usage patterns
+- Monitor resource usage and adjust accordingly
+
+## Maintenance
+
+### Database Maintenance
 ```bash
-# Scale workers
-kubectl scale deployment airflow-worker --replicas=5 -n airflow
+# Backup PostgreSQL
+kubectl exec -n namespace deployment/postgresql -- \
+  pg_dump -U airflow airflow > airflow_backup.sql
 
-# Scale triggerer for more concurrent triggers
-kubectl scale deployment airflow-triggerer --replicas=2 -n airflow
+# Restore PostgreSQL
+kubectl exec -i -n namespace deployment/postgresql -- \
+  psql -U airflow airflow < airflow_backup.sql
 ```
 
-### Resource Management
-Update resource limits in the manifests based on your workload:
-```yaml
-resources:
-  requests:
-    memory: "512Mi"
-    cpu: "250m"
-  limits:
-    memory: "2Gi"
-    cpu: "1000m"
-```
-
-## Monitoring and Maintenance
-
-### Health Checks
-All components include health checks:
-- **Liveness Probes**: Restart unhealthy containers
-- **Readiness Probes**: Mark containers as ready for traffic
-
-### Logs
+### Airflow Maintenance
 ```bash
-# All Airflow component logs
-kubectl logs -n airflow -l "app.kubernetes.io/part-of=airflow" -f
+# Clean old logs
+airflow db clean --clean-before-timestamp 2023-01-01
 
-# Specific component logs
-kubectl logs -n airflow deployment/airflow-scheduler -f
-kubectl logs -n airflow deployment/airflow-worker -f
-kubectl logs -n airflow deployment/airflow-apiserver -f
+# Reset failed task instances
+airflow tasks clear -d dag_id -s start_date -e end_date --state failed
 ```
 
-### Database Migration
+### Upgrades
 ```bash
-# Run database migrations
-kubectl exec -n airflow deployment/airflow-apiserver -- airflow db migrate
+# Apply updates
+kubectl apply -k overlays/environment
+
+# Check rollout status
+kubectl rollout status deployment/airflow-webserver -n namespace
 ```
 
-### Troubleshooting
+## Troubleshooting
 
-#### Common Issues
+### Common Issues
 
-1. **Database Connection Failed**
-   ```bash
-   # Check database connectivity
-   kubectl exec -n airflow deployment/airflow-apiserver -- airflow db check
-   ```
+1. **Database Connection Failed**: Check PostgreSQL connectivity and credentials
+2. **Workers Not Connecting**: Verify Redis connection and Celery configuration
+3. **DAGs Not Loading**: Check DAG folder permissions and file syntax
+4. **High Memory Usage**: Adjust worker resources and monitor task complexity
 
-2. **Worker Not Connecting to Broker**
-   ```bash
-   # Check Redis connectivity
-   kubectl exec -n airflow deployment/airflow-worker -- python -c "import redis; r=redis.Redis(host='redis', port=6379); print(r.ping())"
-   ```
-
-3. **DAGs Not Loading**
-   ```bash
-   # Check DAG directory
-   kubectl exec -n airflow deployment/airflow-apiserver -- ls -la /opt/airflow/dags/
-
-   # Check DAG processor logs
-   kubectl logs -n airflow deployment/airflow-dag-processor -f
-   ```
-
-4. **Pod Issues**
-   ```bash
-   # Describe pod for issues
-   kubectl describe pod -n airflow <pod-name>
-
-   # Check pod events
-   kubectl get events -n airflow --sort-by=.metadata.creationTimestamp
-   ```
-
-## Security Considerations
-
-- **Network Policies**: Consider implementing network policies for Airflow services
-- **Pod Security**: Security contexts are configured (runAsUser: 50000)
-- **Secrets Management**: All sensitive data stored in Kubernetes secrets
-- **RBAC**: Service accounts configured for minimal required permissions
-
-## Customization
-
-### Adding Custom Plugins
-1. Create plugins in your repository
-2. Mount to `/opt/airflow/plugins` volume
-3. Update the `plugins` PVC size as needed
-
-### Environment-Specific Configuration
-Create overlays for different environments:
-```yaml
-# overlays/dev/kustomization.yaml
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-bases:
-  - ../../base
-patchesStrategicMerge:
-  - resources-patch.yaml
-```
-
-### Custom Executors
-To use different executors, update the `airflow-configmap.yaml`:
-```yaml
-# For KubernetesExecutor
-AIRFLOW__CORE__EXECUTOR: KubernetesExecutor
-
-# For LocalExecutor
-AIRFLOW__CORE__EXECUTOR: LocalExecutor
-```
-
-## Backup and Recovery
-
-### Database Backup
-```bash
-# Backup PostgreSQL database
-kubectl exec -n postgres deployment/postgresql -- pg_dump airflow > airflow-backup.sql
-```
-
-### DAGs and Plugins Backup
-```bash
-# Backup persistent volumes
-kubectl cp airflow-apiserver-xxx:/opt/airflow/dags ./dags-backup/
-kubectl cp airflow-apiserver-xxx:/opt/airflow/plugins ./plugins-backup/
-```
+### Debug Mode
+In development environment, debug mode is enabled with:
+- Exposed configuration in UI
+- Disabled authentication
+- DEBUG logging level
 
 ## Cleanup
 
 ```bash
-# Remove Airflow deployment
-kubectl delete -k .
+# Delete dev deployment
+kubectl delete -k overlays/dev
 
-# Remove namespace (only if empty)
+# Delete prod deployment
+kubectl delete -k overlays/prod
+
+# Delete base deployment
+kubectl delete -k base
+
+# Delete namespace (if empty)
+kubectl delete namespace airflow-dev
+kubectl delete namespace airflow-prod
 kubectl delete namespace airflow
 ```
 
-## Notes
+## Version Information
 
-- **ClusterIP Only**: Services use ClusterIP for security
-- **No External Exposure**: No Ingress or NodePort services configured
-- **PostgreSQL Required**: Assumes existing PostgreSQL deployment
-- **Persistent Storage**: Ensure sufficient storage for DAGs and logs
-- **Secrets**: Update all secrets with production values before deployment
+- **Apache Airflow**: `apache/airflow:2.10.2-python3.11`
+- **PostgreSQL**: `postgres:15-alpine`
+- **Redis**: `redis:7-alpine`
 
-## Resources and Performance
+These manifests use pinned versions for better stability and security in production deployments.
 
-### Minimum Resource Requirements
-- **Total Memory**: 4GB+ (including all components)
-- **Total CPU**: 2+ cores recommended
-- **Storage**: 10GB+ for logs and DAGs
+## Additional Resources
 
-### Performance Tuning
-- Adjust worker count based on task volume
-- Scale scheduler/triggerer for high-throughput environments
-- Monitor resource usage and adjust limits accordingly
-- Consider larger persistent volumes for production workloads
-
-This Airflow deployment is configured for production use with ClusterIP services for security and all necessary components for a complete Airflow installation.
+- [Official Airflow Documentation](https://airflow.apache.org/docs/)
+- [Airflow Kubernetes Executor Guide](https://airflow.apache.org/docs/apache-airflow-providers-cncf-kubernetes/stable/kubernetes_executor.html)
+- [Airflow Helm Chart](https://github.com/apache/airflow/tree/main/chart)
+- [Best Practices Guide](https://airflow.apache.org/docs/apache-airflow/stable/best-practices.html)
