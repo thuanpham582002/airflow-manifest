@@ -10,7 +10,7 @@ spec:
   resources:
     requests:
       storage: 25Gi
-  storageClassName: rook-cephfs
+  # Uses cluster default storage class
 
 ---
 apiVersion: v1
@@ -24,7 +24,7 @@ spec:
   resources:
     requests:
       storage: 40Gi
-  storageClassName: rook-cephfs
+  # Uses cluster default storage class
 
 ---
 apiVersion: v1
@@ -38,4 +38,4 @@ spec:
   resources:
     requests:
       storage: 10Gi
-  storageClassName: rook-cephfs
+  # Uses cluster default storage class
