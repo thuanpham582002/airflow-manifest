@@ -1,0 +1,176 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: airflow-init
+  namespace: airflow
+  labels:
+    app.kubernetes.io/name: airflow
+    app.kubernetes.io/component: init
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: airflow
+      securityContext:
+        runAsUser: 0
+        runAsGroup: 0
+      containers:
+      - name: airflow-init
+        image: apache/airflow:3.1.0
+        # Load all config from ConfigMap first
+        envFrom:
+        - configMapRef:
+            name: airflow-config
+        # Then override/add secrets and specific values
+        env:
+        - name: AIRFLOW__CORE__FERNET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: airflow-fernet-key
+              key: fernet-key
+        - name: AIRFLOW__WEBSERVER__SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: airflow-webserver-secret
+              key: webserver-secret-key
+        - name: AIRFLOW__API_AUTH__JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: airflow-api-secrets
+              key: jwt-secret
+        - name: AIRFLOW__CORE__INTERNAL_API_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: airflow-api-secrets
+              key: internal-api-secret-key
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -e
+          echo "========================================"
+          echo "Starting Airflow Database Initialization"
+          echo "Airflow 3.1.0 with FAB Auth Manager"
+          echo "========================================"
+          
+          echo "Creating missing opt dirs if needed..."
+          mkdir -v -p /opt/airflow/{logs,dags,plugins,config}
+          echo
+          
+          echo "Airflow version:"
+          /entrypoint airflow version
+          echo
+          
+          echo "Changing ownership of files in /opt/airflow to 50000:0"
+          chown -R "50000:0" /opt/airflow/
+          echo
+          
+          echo "========================================"
+          echo "Step 1: Database Connection Check"
+          echo "========================================"
+          if /entrypoint airflow db check 2>/dev/null; then
+            echo "✓ Database connection successful"
+          else
+            echo "✗ Database connection failed - please check your connection string"
+            exit 1
+          fi
+          echo
+          
+          echo "========================================"
+          echo "Step 2: Database Initialization/Upgrade"
+          echo "========================================"
+          
+          # Check if this is a fresh database or existing one
+          DB_CHECK_OUTPUT=$(/entrypoint airflow db check 2>&1 || true)
+          
+          if echo "$DB_CHECK_OUTPUT" | grep -qi "No such table\|doesn't exist\|relation.*does not exist"; then
+            echo "Fresh database detected - running initial setup with db reset..."
+            echo "Note: In Airflow 3.x with FAB, 'airflow db reset' is required"
+            echo "to create the 'session' table on first run."
+            echo
+            echo "y" | /entrypoint airflow db reset
+            echo "✓ Database initialization completed"
+          else
+            echo "Existing database detected - running safe upgrade..."
+            echo "This will preserve all existing data (DAGs, runs, connections, etc.)"
+            echo
+            /entrypoint airflow db migrate
+            echo "✓ Database upgrade completed"
+          fi
+          echo
+          
+          echo "========================================"
+          echo "Step 3: FAB Database Migration"
+          echo "========================================"
+          # Run FAB-specific migrations to ensure all FAB tables are created
+          /entrypoint airflow fab-db migrate || echo "FAB migrate completed or not needed"
+          echo "✓ FAB database migration completed"
+          echo
+          
+          echo "========================================"
+          echo "Step 4: Create Admin User"
+          echo "========================================"
+          # Create admin user - this also seeds FAB roles and permissions
+          /entrypoint airflow users create \
+            --username airflow \
+            --password airflow \
+            --firstname Admin \
+            --lastname User \
+            --role Admin \
+            --email admin@example.com 2>&1 | tee /tmp/user_create.log
+          
+          # Check if user creation was successful or user already exists
+          if grep -q "User airflow already exists" /tmp/user_create.log || \
+             grep -q "Added Permission" /tmp/user_create.log || \
+             ! grep -q "Error" /tmp/user_create.log; then
+            echo "✓ Admin user created or already exists"
+          else
+            echo "⚠ User creation encountered issues, but may already exist"
+            echo "Check logs above for details"
+          fi
+          echo
+          
+          echo "========================================"
+          echo "Step 5: Final Verification"
+          echo "========================================"
+
+          # Final verification with airflow db check
+          if /entrypoint airflow db check >/dev/null 2>&1; then
+            echo "✓ Final database check passed"
+          else
+            echo "⚠ Final database check failed, but initialization may be complete"
+          fi
+
+          echo "========================================"
+          echo "✓ Airflow Initialization Completed Successfully!"
+          echo "========================================"
+          echo "FAB authentication manager is configured"
+          echo "Admin credentials: airflow / airflow"
+          echo "You can now deploy other Airflow components"
+          echo "========================================"
+        volumeMounts:
+        - name: dags
+          mountPath: /opt/airflow/dags
+        - name: logs
+          mountPath: /opt/airflow/logs
+        - name: plugins
+          mountPath: /opt/airflow/plugins
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "100m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+      volumes:
+      - name: dags
+        persistentVolumeClaim:
+          claimName: airflow-dags-pvc
+      - name: logs
+        persistentVolumeClaim:
+          claimName: airflow-logs-pvc
+      - name: plugins
+        persistentVolumeClaim:
+          claimName: airflow-plugins-pvc

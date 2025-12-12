@@ -1,0 +1,66 @@
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: postgresql-airflow-setup
+  namespace: airflow
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: postgresql-setup
+        image: postgres:15
+        env:
+        - name: PGPASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: pg-superuser
+              key: password
+        command:
+        - /bin/bash
+        - -c
+        - |
+          echo "Setting up Airflow database..."
+          echo "$PGPASSWORD"
+          export PGPASSWORD="${PGPASSWORD}"
+          # Wait for PostgreSQL to be ready
+          until pg_isready -h pgsql-cluster-rw.postgresql-cluster.svc.cluster.local -U postgres -p 5432; do
+            echo "Waiting for PostgreSQL to be ready..."
+            sleep 5
+          done
+
+          # Create Airflow database
+          psql -h pgsql-cluster-rw.postgresql-cluster.svc.cluster.local -U postgres -c "CREATE DATABASE airflow;" || echo "Database airflow already exists"
+
+          # Create Airflow user
+          psql -h pgsql-cluster-rw.postgresql-cluster.svc.cluster.local -U postgres -c "CREATE USER airflow WITH PASSWORD 'airflow';" || echo "User airflow already exists"
+
+          # Grant privileges
+          psql -h pgsql-cluster-rw.postgresql-cluster.svc.cluster.local -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE airflow TO airflow;"
+
+          psql -h pgsql-cluster-rw.postgresql-cluster.svc.cluster.local -U postgres -d airflow -c "ALTER SCHEMA public OWNER TO airflow;"
+
+          psql -h pgsql-cluster-rw.postgresql-cluster.svc.cluster.local -U postgres -d airflow -c "GRANT ALL ON SCHEMA public TO airflow;"
+
+          psql -h pgsql-cluster-rw.postgresql-cluster.svc.cluster.local -U postgres -d airflow -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO airflow;"
+
+          echo "Airflow database setup completed!"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "200m"
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pg-superuser
+  namespace: airflow
+type: kubernetes.io/basic-auth
+data:
+  password: QWJjRXIjMjQ2
+  username: cG9zdGdyZXM=

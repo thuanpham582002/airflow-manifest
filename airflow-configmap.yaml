@@ -1,0 +1,25 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: airflow-config
+  namespace: airflow
+data:
+  AIRFLOW__CORE__EXECUTOR: "KubernetesExecutor"
+  AIRFLOW__CORE__AUTH_MANAGER: "airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager"
+  # FERNET_KEY will be set via environment variable from secret
+  AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+  AIRFLOW__CORE__LOAD_EXAMPLES: "true"
+  AIRFLOW__CORE__EXECUTION_API_SERVER_URL: "http://airflow-apiserver:8080/execution/"
+  AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
+  AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: "postgresql+psycopg2://airflow:airflow@pgsql-cluster-rw.postgresql-cluster.svc.cluster.local/airflow"
+  # KubernetesExecutor configuration
+  AIRFLOW__KUBERNETES__NAMESPACE: "airflow"
+  AIRFLOW__KUBERNETES__POD_TEMPLATE_FILE: "/opt/airflow/pod_templates/pod_template.yaml"
+  AIRFLOW__KUBERNETES__WORKER_SERVICE_ACCOUNT_NAME: "airflow-worker"
+  AIRFLOW__KUBERNETES__IN_CLUSTER: "true"
+  AIRFLOW__KUBERNETES__DELETE_WORKER_PODS: "true"
+  AIRFLOW__KUBERNETES__WORKER_CONTAINER_REPOSITORY: "apache/airflow"
+  AIRFLOW__KUBERNETES__WORKER_CONTAINER_TAG: "3.1.0"
+  AIRFLOW__KUBERNETES__MOUNT_DAGS: "true"
+  AIRFLOW__KUBERNETES__MOUNT_LOGS: "true"
